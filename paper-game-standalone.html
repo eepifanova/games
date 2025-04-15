@@ -1,0 +1,243 @@
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Карта сокровищ</title>
+  <style>
+    body {
+      font-family: monospace;
+      background-color: #fdf6e3;
+      margin: 0;
+      padding: 2em;
+    }
+    #log {
+      white-space: pre-wrap;
+      border: 1px solid #ccc;
+      background: #fff;
+      height: 300px;
+      overflow-y: auto;
+      padding: 1em;
+      margin-bottom: 1em;
+    }
+    button {
+      margin: 0.2em;
+      padding: 0.5em 1em;
+    }
+  </style>
+</head>
+<body>
+  <h1>Карта сокровищ 🗺️</h1>
+  <div id="log"></div>
+  <div>
+    <button onclick="send('вверх')">вверх</button>
+    <button onclick="send('вниз')">вниз</button>
+    <button onclick="send('влево')">влево</button>
+    <button onclick="send('вправо')">вправо</button>
+    <button onclick="restart()">заново</button>
+  </div>
+
+  <script>
+    const log = document.getElementById('log');
+
+    const directions = {
+      "вверх": [-1, 0],
+      "вниз": [1, 0],
+      "влево": [0, -1],
+      "вправо": [0, 1]
+    };
+
+    function logMessage(msg) {
+      log.textContent += msg + "\n";
+      log.scrollTop = log.scrollHeight;
+    }
+
+    class Cell {
+      constructor() {
+        this.walls = { up: false, down: false, left: false, right: false };
+        this.object = null;
+      }
+    }
+
+    class Player {
+      constructor() {
+        this.x = 0;
+        this.y = 0;
+        this.health = "healthy";
+        this.hasTools = false;
+        this.hasTreasure = false;
+      }
+    }
+
+    class GameMap {
+      constructor() {
+        this.size = 10;
+        this.grid = Array.from({ length: this.size }, () =>
+          Array.from({ length: this.size }, () => new Cell())
+        );
+        this.objects = {};
+        this.unknownCycle = ["unknown1", "unknown2", "unknown3"];
+        this.placeOuterWalls();
+        this.placeInternalWalls();
+        this.placeObjects();
+      }
+
+      placeOuterWalls() {
+        for (let i = 0; i < this.size; i++) {
+          this.grid[0][i].walls.up = true;
+          this.grid[this.size - 1][i].walls.down = true;
+          this.grid[i][0].walls.left = true;
+          this.grid[i][this.size - 1].walls.right = true;
+        }
+      }
+
+      placeInternalWalls() {
+        let wallCount = 0;
+        while (wallCount < 20) {
+          const x = Math.floor(Math.random() * 8) + 1;
+          const y = Math.floor(Math.random() * 8) + 1;
+          const dirs = ["up", "down", "left", "right"];
+          const dir = dirs[Math.floor(Math.random() * dirs.length)];
+          const dxdy = { up: [-1, 0], down: [1, 0], left: [0, -1], right: [0, 1] };
+          const [dx, dy] = dxdy[dir];
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < this.size && ny < this.size) {
+            this.grid[x][y].walls[dir] = true;
+            const opposite = { up: "down", down: "up", left: "right", right: "left" };
+            this.grid[nx][ny].walls[opposite[dir]] = true;
+            wallCount++;
+          }
+        }
+      }
+
+      placeObjects() {
+        const names = ["treasure", "fake_treasure", "tools", "med", "lion", "tiger", "unknown1", "unknown2", "unknown3", "exit"];
+        const placed = new Set();
+        for (const name of names) {
+          while (true) {
+            const x = Math.floor(Math.random() * 8) + 1;
+            const y = Math.floor(Math.random() * 8) + 1;
+            const key = `${x},${y}`;
+            const tooClose = [...placed].some(pos => {
+              const [px, py] = pos.split(',').map(Number);
+              return Math.abs(px - x) + Math.abs(py - y) <= 2;
+            });
+            if (!placed.has(key) && !tooClose) {
+              this.grid[x][y].object = name;
+              this.objects[name] = [x, y];
+              placed.add(key);
+              break;
+            }
+          }
+        }
+      }
+
+      getCell(x, y) {
+        return this.grid[x][y];
+      }
+    }
+
+    class Game {
+      constructor() {
+        this.map = new GameMap();
+        this.player = new Player();
+        [this.player.x, this.player.y] = [Math.floor(Math.random() * 8) + 1, Math.floor(Math.random() * 8) + 1];
+        this.gameOver = false;
+      }
+
+      move(direction) {
+        if (this.gameOver) return "Игра завершена. Нажмите 'заново'.";
+
+        const [dx, dy] = directions[direction];
+        const cell = this.map.getCell(this.player.x, this.player.y);
+        const wallKey = { "-1,0": "up", "1,0": "down", "0,-1": "left", "0,1": "right" }[[dx,dy].toString()];
+        if (cell.walls[wallKey]) return "Стенка";
+
+        const nx = this.player.x + dx;
+        const ny = this.player.y + dy;
+        if (nx < 0 || ny < 0 || nx >= this.map.size || ny >= this.map.size) return "Стенка (граница)";
+        this.player.x = nx;
+        this.player.y = ny;
+        return this.interact();
+      }
+
+      interact() {
+        const cell = this.map.getCell(this.player.x, this.player.y);
+        const obj = cell.object;
+
+        if (this.player.health === "injured" && ["tools", "treasure", "fake_treasure", "exit"].includes(obj))
+          return "Ничего интересного";
+
+        if (obj === "lion" || obj === "tiger") {
+          this.player.health = "injured";
+          this.player.hasTools = false;
+          this.player.hasTreasure = false;
+          return `Вы встретили ${obj === "lion" ? "льва" : "тигра"}`;
+        }
+
+        if (obj === "med") {
+          const prev = this.player.health;
+          this.player.health = "healthy";
+          return prev === "injured" ? "Вы нашли медпункт" : "Вы нашли медпункт (вы и так здоровы)";
+        }
+
+        if (obj === "tools") {
+          if (this.player.hasTools) return "Вы нашли склад (инструменты уже есть)";
+          this.player.hasTools = true;
+          return "Вы нашли склад (получены инструменты)";
+        }
+
+        if (obj === "treasure") {
+          if (this.player.hasTools) {
+            this.player.hasTools = false;
+            this.player.hasTreasure = true;
+            return "Вы выкопали клад";
+          }
+          return "Вы нашли клад (нужны инструменты)";
+        }
+
+        if (obj === "fake_treasure") {
+          if (this.player.hasTools) {
+            this.player.hasTools = false;
+            return "Вы выкопали ложный клад (инструменты потрачены)";
+          }
+          return "Вы нашли клад (нужны инструменты)";
+        }
+
+        if (obj === "exit") {
+          if (this.player.hasTreasure) {
+            this.gameOver = true;
+            return "Вы выбрались с кладом — победа! Нажмите 'заново', чтобы сыграть снова.";
+          }
+          return "Вы нашли выход";
+        }
+
+        if (this.map.unknownCycle.includes(obj)) {
+          const idx = this.map.unknownCycle.indexOf(obj);
+          const next = this.map.unknownCycle[(idx + 1) % 3];
+          [this.player.x, this.player.y] = this.map.objects[next];
+          return `Вы попали в ${obj}, вас телепортирует в ${next}`;
+        }
+
+        return "Ничего интересного";
+      }
+    }
+
+    let game = new Game();
+
+    function send(cmd) {
+      logMessage(`> ${cmd}`);
+      const result = game.move(cmd);
+      logMessage(result);
+    }
+
+    function restart() {
+      game = new Game();
+      log.textContent = "";
+      logMessage("Новая игра началась. Введите команду.");
+    }
+
+    restart();
+  </script>
+</body>
+</html>
